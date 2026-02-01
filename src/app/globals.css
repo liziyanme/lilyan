@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tint-blue: #e8f0fe;
+  --tint-blue-strong: #c5dcf7;
+  --tint-purple: #f3e8fa;
+  --tint-purple-strong: #e8d4f5;
+  --stardew-cream: #f5e6d3;
+  --stardew-panel: #e8dcc4;
+  --stardew-brown: #5c4033;
+  --stardew-dark: #3d2c29;
+  --stardew-green: #4a7c59;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  min-height: 100dvh;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 像素风：图片不模糊，保持像素感 */
+img.pixel-art {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+/* 像素风边框：阶梯状描边 */
+.pixel-border {
+  border: 3px solid currentColor;
+  box-shadow:
+    3px 0 0 0 currentColor,
+    0 3px 0 0 currentColor,
+    3px 3px 0 0 currentColor;
+}
+
+.pixel-box {
+  border: 3px solid var(--stardew-dark);
+  box-shadow: 4px 4px 0 var(--stardew-dark);
+}
+
+/* 星露谷风窗口卡片 */
+.card-stardew {
+  border: 3px solid var(--stardew-dark);
+  box-shadow: 6px 6px 0 var(--stardew-dark);
+  background-color: var(--stardew-cream);
+}
+
+/* 顶部安全区（刘海） */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+/* 底部安全区，适配手机刘海/横条 */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-bottom {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+  }
+}
+
+/* 星露谷风按钮（用 CSS 变量避免 @apply 自定义类报错） */
+@layer components {
+  .btn-stardew {
+    border-radius: 4px;
+    background-color: var(--stardew-green);
+    color: white;
+    font-family: var(--font-pixel), monospace;
+    font-weight: 700;
+    border: 3px solid var(--stardew-dark);
+    box-shadow: 4px 4px 0 var(--stardew-dark);
+    transition: all 0.15s;
+  }
+  .btn-stardew:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0 var(--stardew-dark);
+  }
+  .card-pixel {
+    border: 3px solid var(--stardew-dark);
+    background-color: var(--stardew-cream);
+    box-shadow: 6px 6px 0 var(--stardew-dark);
+  }
+}

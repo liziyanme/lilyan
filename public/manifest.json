@@ -1,0 +1,24 @@
+{
+  "name": "LZY's Diary",
+  "short_name": "LZY Diary",
+  "description": "星露谷风电子像素日记本",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5E6D3",
+  "theme_color": "#4A7C59",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
