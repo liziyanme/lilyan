@@ -46,7 +46,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className={`${pressStart.variable} ${dotGothic.variable}`}>
-      <body className="min-h-screen bg-tint-blue-strong text-stardew-dark antialiased font-cute-cn flex flex-col relative">
+      <body className="min-h-screen text-stardew-dark antialiased font-cute-cn flex flex-col relative bg-gradient-to-b from-[#fdfbf8] via-[#f6f1ea] to-[#efe8df]">
         <VisitorTracker />
         <PixelSceneBackground />
         <header className="relative z-20"><HeaderProfile /></header>

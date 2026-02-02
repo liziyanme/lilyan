@@ -2,23 +2,44 @@
 
 写日记添加照片前，需在 Supabase 创建存储桶。
 
-## 1. 创建存储桶
+---
 
-1. 打开 [Supabase Dashboard](https://supabase.com/dashboard) → 你的项目
-2. 左侧 **Storage** → **New bucket**
-3. 桶名填写：`diary-images`
-4. 勾选 **Public bucket**（公开读取，便于图片展示）
-5. 点击 **Create bucket**
+## 方法一：一键脚本（推荐）
 
-## 2. 设置上传策略（可选）
+1. 在 `.env.local` 里加上一行（Supabase → Project Settings → API → service_role 复制）：
+   ```
+   SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIs...
+   ```
 
-若上传失败，检查 Storage 策略：
+2. 在项目根目录 `c:\diary` 打开终端，执行：
+   ```
+   node scripts/setup-storage.js
+   ```
 
-1. Storage → 点击 `diary-images` 桶
-2. **Policies** → **New policy**
-3. 选择 **For full customization** 或使用预设
-4. 策略示例（允许登录用户上传、公开读取）：
-   - INSERT: `auth.role() = 'authenticated'`
-   - SELECT: `true`（公开读）
+3. 看到 `✓ diary-images 桶创建成功！` 即完成。
 
-完成后，写日记时即可添加照片。
+---
+
+## 方法二：网页手动创建
+
+1. 打开 [Supabase Dashboard](https://supabase.com/dashboard) → 点进你的项目
+2. 左侧菜单点 **Storage**
+3. 点右上角 **New bucket**
+4. **Name** 填：`diary-images`（必须一模一样）
+5. 勾选 **Public bucket**
+6. 点 **Create bucket**
+
+---
+
+## 若提示 "new row violates row-level security policy"
+
+说明桶已存在，但缺少上传权限。在 **Supabase → SQL Editor** 里执行项目里的 **`supabase-storage-policies.sql`**（全部复制粘贴 → Run），执行后再试上传。
+
+---
+
+## 若上传仍失败（其他错误）
+
+1. Storage → 点 `diary-images` → **Policies**
+2. 点 **New policy** → **For full customization**
+3. 策略名随便填，**Allowed operation** 选 **INSERT**，**Target roles** 选 **authenticated**，**Policy definition** 填 `true`
+4. 再新建一条：**SELECT**，**Policy definition** 填 `true`（公开读）

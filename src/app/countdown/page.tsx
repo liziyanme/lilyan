@@ -102,7 +102,7 @@ export default function CountdownPage() {
                     )}
                   </p>
                 </div>
-                <button onClick={() => remove(i.id)} className="font-cute-cn text-xs text-red-600 border border-red-300 rounded-pixel px-2 py-1">
+                <button onClick={() => remove(i.id)} className="font-cute-cn text-xs text-red-600 border-2 border-stardew-dark rounded-pixel px-2 py-1 shadow-pixel hover:bg-red-50">
                   删除
                 </button>
               </li>

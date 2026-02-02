@@ -14,12 +14,17 @@ export function HeaderProfile() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    setProfile(getProfile());
+    const refresh = () => setProfile(getProfile());
+    refresh();
     supabase.auth.getSession().then(({ data: { session } }) => setIsLoggedIn(!!session));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) =>
       setIsLoggedIn(!!session)
     );
-    return () => subscription.unsubscribe();
+    window.addEventListener("profile-updated", refresh);
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener("profile-updated", refresh);
+    };
   }, [pathname]);
 
   const [logoutConfirm, setLogoutConfirm] = useState(false);

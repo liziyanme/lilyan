@@ -34,4 +34,5 @@ export function setProfile(p: Partial<Profile>): void {
     avatar: p.avatar !== undefined ? p.avatar : current.avatar,
   };
   localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(next));
+  window.dispatchEvent(new CustomEvent("profile-updated"));
 }

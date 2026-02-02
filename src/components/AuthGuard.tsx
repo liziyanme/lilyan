@@ -65,7 +65,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }
   if (authorized === true) return <>{children}</>;
   return (
-    <div className="min-h-dvh flex flex-col items-center justify-center gap-4 relative z-10 bg-tint-blue-strong">
+    <div className="min-h-dvh flex flex-col items-center justify-center gap-4 relative z-10 bg-gradient-to-b from-[#fdfbf8] via-[#f6f1ea] to-[#efe8df]">
       <div className="card-pixel rounded-pixel-lg p-6 max-w-sm text-center">
         <p className="font-cute-cn text-stardew-brown text-sm">正在验证登录状态...</p>
         <p className="font-cute-cn text-stardew-brown/70 text-xs mt-2">若长时间无响应，请检查 .env.local 配置后重启</p>

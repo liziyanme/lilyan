@@ -25,7 +25,7 @@ export default function HomePage() {
             className="w-12 h-12 sm:w-14 sm:h-14 object-contain pixel-art flex-shrink-0"
           />
         </div>
-        <p className="font-cute-cn text-sm text-stardew-brown mt-1">lzy的电子日记本</p>
+        <p className="font-cute-cn text-sm text-stardew-brown mt-1 text-center">李紫妍大王万岁！</p>
       </header>
 
       <nav className="w-full max-w-sm space-y-4">

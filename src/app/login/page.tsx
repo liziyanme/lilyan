@@ -85,7 +85,7 @@ export default function LoginPage() {
             className="w-12 h-12 sm:w-14 sm:h-14 object-contain pixel-art flex-shrink-0"
           />
         </div>
-        <p className="font-cute-cn text-sm text-stardew-brown mt-1">lzy的电子日记本</p>
+        <p className="font-cute-cn text-sm text-stardew-brown mt-1 text-center">李紫妍大王万岁！</p>
       </header>
 
       <div className="w-full max-w-sm card-pixel rounded-pixel-lg p-6 shadow-pixel-lg hover:shadow-[8px_8px_0_var(--stardew-dark)] transition-shadow">

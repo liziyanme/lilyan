@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabase";
 import { getProfile } from "@/lib/profile";
 import { reverseGeocodeToCityDistrict } from "@/lib/geocode";
@@ -41,9 +42,12 @@ export default function DiaryPage() {
   const [addingNotebook, setAddingNotebook] = useState(false);
 
   const [tab, setTab] = useState<"diary" | "draft">("diary");
+  const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
   const [closeConfirm, setCloseConfirm] = useState<"draft" | null>(null);
+  const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState<Notebook | null>(null);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
+  const [viewingImageUrl, setViewingImageUrl] = useState<string | null>(null);
 
   const fetchDiaries = async () => {
     setLoading(true);
@@ -151,9 +155,12 @@ export default function DiaryPage() {
 
   const published = entries.filter((e) => !e.is_draft);
   const drafts = entries.filter((e) => e.is_draft);
-  const filtered = published.filter((e) =>
+  const bySearch = published.filter((e) =>
     !search.trim() || e.content.toLowerCase().includes(search.toLowerCase())
   );
+  const filtered = selectedNotebookId
+    ? bySearch.filter((e) => e.notebook_id === selectedNotebookId)
+    : bySearch;
 
   const getLocation = () => {
     setLocationLoading(true);
@@ -251,7 +258,8 @@ export default function DiaryPage() {
   };
 
   const closeForm = (force = false) => {
-    if (!force && formContent.trim() && !editing?.id && !formSubmitting) {
+    const hasContent = formContent.trim() || formImages.length > 0;
+    if (!force && hasContent && !editing?.id && !formSubmitting) {
       setCloseConfirm("draft");
       return;
     }
@@ -304,8 +312,16 @@ export default function DiaryPage() {
     else await fetchDiaries();
   };
 
-  const uploadImages = async (diaryId: string, albumId: string | null): Promise<string[]> => {
+  const deleteNotebook = async (n: Notebook) => {
+    const { error } = await supabase.from("notebook").delete().eq("id", n.id);
+    setDeleteNotebookConfirm(null);
+    if (error) console.error(error);
+    else await fetchNotebooks();
+  };
+
+  const uploadImages = async (diaryId: string, albumId: string | null): Promise<{ urls: string[]; errors: string[] }> => {
     const urls: string[] = [];
+    const errors: string[] = [];
     for (let i = 0; i < formImages.length; i++) {
       const file = formImages[i];
       const ext = file.name.split(".").pop() || "jpg";
@@ -313,29 +329,43 @@ export default function DiaryPage() {
       const { error } = await supabase.storage.from("diary-images").upload(path, file, { upsert: true });
       if (error) {
         console.error("Upload error:", error);
+        errors.push(`第${i + 1}张: ${error.message}`);
         continue;
       }
       const { data: { publicUrl } } = supabase.storage.from("diary-images").getPublicUrl(path);
       urls.push(publicUrl);
       if (albumId) {
-        await supabase.from("album_image").insert({
+        const { error: insertErr } = await supabase.from("album_image").insert({
           album_id: albumId,
           image_url: publicUrl,
           diary_id: diaryId,
         });
+        if (insertErr) errors.push(`第${i + 1}张写入相册失败: ${insertErr.message}`);
       }
     }
-    return urls;
+    return { urls, errors };
   };
 
   const submit = async () => {
-    const content = formContent.trim();
-    if (!content) return;
+    const content = formContent.trim() || "（无文字）";
+    const hasImages = formImages.length > 0;
+    if (!content && !hasImages) return;
     setFormSubmitting(true);
+    setFormError("");
     const { data: { user } } = await supabase.auth.getUser();
     const profile = getProfile();
-    // 有照片时自动选第一个相册（若未选）
-    const albumId = formAlbumId || (formImages.length > 0 && albums[0] ? albums[0].id : null) || null;
+    let albumId = formAlbumId || (hasImages && albums[0] ? albums[0].id : null) || null;
+    if (hasImages && !albumId) {
+      const { data: firstAlbum } = await supabase.from("album").select("id").order("sort_order", { ascending: true }).limit(1).maybeSingle();
+      albumId = firstAlbum?.id ?? null;
+      if (!albumId) {
+        await ensureDefaultAlbum();
+        const list = await fetchAlbums();
+        albumId = list[0]?.id ?? null;
+      } else {
+        await fetchAlbums();
+      }
+    }
     const row = {
       user_id: user?.id ?? null,
       content,
@@ -348,26 +378,33 @@ export default function DiaryPage() {
       author_avatar: profile.avatar,
     };
     try {
+      let uploadErrorMsg = "";
       if (editing) {
         const { error } = await supabase.from("diary").update(row).eq("id", editing.id);
         if (error) throw error;
         if (formImages.length > 0 && albumId) {
-          await uploadImages(editing.id, albumId);
+          const { errors: uploadErrors } = await uploadImages(editing.id, albumId);
+          if (uploadErrors.length > 0) uploadErrorMsg = "图片上传失败：" + uploadErrors.join("；");
         }
       } else {
         const { data: inserted, error } = await supabase.from("diary").insert(row).select("id").single();
         if (error) throw error;
-        if (inserted && formImages.length > 0 && albumId) {
-          await uploadImages(inserted.id, albumId);
+        if (inserted && formImages.length > 0) {
+          const { errors: uploadErrors } = await uploadImages(inserted.id, albumId);
+          if (uploadErrors.length > 0) uploadErrorMsg = "图片上传失败：" + uploadErrors.join("；");
         }
       }
       await fetchDiaries();
-      setSaveSuccessMessage("保存成功");
-      setTimeout(() => {
-        setShowForm(false);
-        setEditing(null);
-        setSaveSuccessMessage(null);
-      }, 1200);
+      if (uploadErrorMsg) {
+        setFormError(uploadErrorMsg + "。请检查 Supabase → Storage 是否已创建 diary-images 桶并设为 Public，见 supabase-storage-setup.md");
+      } else {
+        setSaveSuccessMessage("保存成功");
+        setTimeout(() => {
+          setShowForm(false);
+          setEditing(null);
+          setSaveSuccessMessage(null);
+        }, 1200);
+      }
     } catch (err) {
       console.error(err);
       setFormError(err instanceof Error ? err.message : "保存失败。若提示缺少 is_draft 或 notebook_id 列，请在 Supabase 执行 supabase-draft.sql 和 supabase-notebook.sql");
@@ -393,12 +430,20 @@ export default function DiaryPage() {
           ← 返回首页
         </Link>
         <h1 className="font-cute-cn font-bold text-xl text-stardew-dark">📔 日记本</h1>
-        <button
-          onClick={openNew}
-          className="font-cute-cn text-stardew-green font-bold border-2 border-stardew-dark rounded-pixel px-3 py-1.5 shadow-pixel active:shadow-[2px_2px_0_#3D2C29] active:translate-x-0.5 active:translate-y-0.5 transition-all"
-        >
-          ✏️ 写日记
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => { await supabase.auth.signOut(); router.replace("/login"); }}
+            className="font-cute-cn text-stardew-brown text-sm border-2 border-stardew-dark rounded-pixel px-2 py-1.5"
+          >
+            退出
+          </button>
+          <button
+            onClick={openNew}
+            className="font-cute-cn text-stardew-green font-bold border-2 border-stardew-dark rounded-pixel px-3 py-1.5 shadow-pixel active:shadow-[2px_2px_0_#3D2C29] active:translate-x-0.5 active:translate-y-0.5 transition-all"
+          >
+            ✏️ 写日记
+          </button>
+        </div>
       </header>
 
       {/* 日记 / 草稿箱 切换 */}
@@ -419,17 +464,40 @@ export default function DiaryPage() {
         </button>
       </div>
 
-      {/* 我的日记本（仅日记 tab，展示可选本子） */}
+      {/* 我的日记本（仅日记 tab，点本子可看该分类日记） */}
       {tab === "diary" && (
         <div className="card-pixel rounded-pixel-lg p-4 mb-4 max-w-md mx-auto">
-          <p className="font-cute-cn font-bold text-stardew-dark mb-2">📔 我的日记本</p>
+          <p className="font-cute-cn font-bold text-stardew-dark mb-2">📔 点日记本看该分类</p>
           {notebooks.length === 0 ? (
             <p className="font-cute-cn text-stardew-brown text-sm mb-2">暂无日记本。写日记时点「＋ 新建日记本」可添加；若一直为空，请在 Supabase 执行 supabase-notebook.sql</p>
           ) : (
             <ul className="flex flex-wrap gap-2 mb-2">
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setSelectedNotebookId(null)}
+                  className={`font-cute-cn text-sm px-3 py-1.5 rounded-pixel border transition-all ${selectedNotebookId === null ? "bg-stardew-green text-white border-stardew-dark" : "bg-stardew-panel border-stardew-dark/30 text-stardew-dark"}`}
+                >
+                  全部
+                </button>
+              </li>
               {notebooks.map((n) => (
-                <li key={n.id} className="font-cute-cn text-sm px-3 py-1.5 rounded-pixel bg-stardew-panel border border-stardew-dark/30 text-stardew-dark">
-                  {n.name}
+                <li key={n.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedNotebookId(n.id)}
+                    className={`font-cute-cn text-sm px-3 py-1.5 rounded-pixel border transition-all ${selectedNotebookId === n.id ? "bg-stardew-green text-white border-stardew-dark" : "bg-stardew-panel border-stardew-dark/30 text-stardew-dark"}`}
+                  >
+                    {n.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(ev) => { ev.stopPropagation(); setDeleteNotebookConfirm(n); }}
+                    className="font-cute-cn text-xs text-red-600 border-2 border-stardew-dark rounded-pixel px-2 py-1 shadow-pixel hover:bg-red-50"
+                    title="删除日记本"
+                  >
+                    删除
+                  </button>
                 </li>
               ))}
             </ul>
@@ -506,7 +574,7 @@ export default function DiaryPage() {
                   <button
                     type="button"
                     onClick={() => setDeleteConfirm(e)}
-                    className="font-cute-cn text-sm text-red-600 border border-red-400 rounded-pixel px-3 py-1.5 hover:bg-red-50"
+                    className="font-cute-cn text-sm text-red-600 border-2 border-stardew-dark rounded-pixel px-3 py-1.5 shadow-pixel hover:bg-red-50"
                   >
                     删除
                   </button>
@@ -561,17 +629,22 @@ export default function DiaryPage() {
         </ul>
       ))}
 
-      {/* 日记详情 - 全屏展示（仿微博） */}
-      {viewing && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-tint-blue-strong">
-          <header className="flex items-center gap-3 px-4 py-3 border-b-2 border-stardew-dark/20 bg-white/90 shrink-0">
-            <button onClick={() => setViewing(null)} className="font-cute-cn text-stardew-dark text-sm font-bold">
+      {/* 日记详情 - 用 Portal 挂到 body，保证在全局 header 之上，返回按钮可见 */}
+      {viewing && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[100] flex flex-col bg-gradient-to-b from-[#fdfbf8] via-[#f6f1ea] to-[#efe8df] safe-top">
+          <header className="flex items-center gap-3 px-4 py-3 border-b-2 border-stardew-dark/20 bg-stardew-panel/95 shrink-0">
+            <button
+              type="button"
+              onClick={() => setViewing(null)}
+              className="font-cute-cn text-stardew-green font-bold border-2 border-stardew-dark rounded-pixel px-3 py-2 shadow-pixel active:shadow-[2px_2px_0_#3D2C29] active:translate-x-0.5 active:translate-y-0.5 transition-all text-sm shrink-0"
+            >
               ← 返回
             </button>
-            <h2 className="font-cute-cn font-bold text-stardew-dark flex-1 text-center">日记</h2>
+            <h2 className="font-cute-cn font-bold text-stardew-dark flex-1 text-center min-w-0">日记</h2>
             <button
+              type="button"
               onClick={async () => { await supabase.auth.signOut(); router.replace("/login"); }}
-              className="font-cute-cn text-stardew-brown text-sm border-2 border-stardew-dark rounded-pixel px-3 py-1.5"
+              className="font-cute-cn text-stardew-brown text-sm border-2 border-stardew-dark rounded-pixel px-3 py-1.5 shrink-0"
             >
               退出
             </button>
@@ -604,17 +677,33 @@ export default function DiaryPage() {
               {viewingImages.length > 0 && (
                 <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {viewingImages.map((url, i) => (
-                    <div key={i} className="aspect-square rounded-pixel overflow-hidden border-2 border-stardew-dark bg-stardew-panel">
-                      <img src={url} alt="" className="w-full h-full object-cover pixel-art" />
-                    </div>
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setViewingImageUrl(url)}
+                      className="aspect-square rounded-pixel overflow-hidden border-2 border-stardew-dark bg-stardew-panel text-left block w-full cursor-zoom-in"
+                    >
+                      <img src={url} alt="" className="w-full h-full object-cover pixel-art pointer-events-none" />
+                    </button>
                   ))}
+                </div>
+              )}
+              {viewingImageUrl && (
+                <div
+                  className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95 p-4"
+                  onClick={() => setViewingImageUrl(null)}
+                >
+                  <button type="button" className="absolute top-4 right-4 font-cute-cn text-white text-sm border border-white/60 rounded-pixel px-3 py-1.5" onClick={() => setViewingImageUrl(null)}>
+                    关闭
+                  </button>
+                  <img src={viewingImageUrl} alt="" className="max-w-full max-h-[90vh] object-contain" onClick={(e) => e.stopPropagation()} />
                 </div>
               )}
               <div className="flex gap-3 mt-6">
                 <button onClick={() => openEdit(viewing)} className="font-cute-cn text-sm btn-stardew py-2 px-4">
                   编辑
                 </button>
-                <button onClick={() => setDeleteConfirm(viewing)} className="font-cute-cn text-sm border-2 border-red-400 text-red-600 rounded-pixel py-2 px-4 hover:bg-red-50">
+                <button onClick={() => setDeleteConfirm(viewing)} className="font-cute-cn text-sm text-red-600 border-2 border-stardew-dark rounded-pixel py-2 px-4 shadow-pixel hover:bg-red-50">
                   删除
                 </button>
               </div>
@@ -630,7 +719,7 @@ export default function DiaryPage() {
               </div>
             </div>
           </div>
-          <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 border-t-2 border-stardew-dark/20 safe-bottom">
+          <div className="fixed bottom-0 left-0 right-0 p-4 bg-stardew-panel/95 border-t-2 border-stardew-dark/20 safe-bottom">
             <div className="max-w-lg mx-auto flex gap-2">
               <input
                 type="text"
@@ -645,7 +734,8 @@ export default function DiaryPage() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 删除确认弹窗 */}
@@ -656,13 +746,35 @@ export default function DiaryPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setDeleteConfirm(null)}
-                className="flex-1 font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel py-2 bg-stardew-panel"
+                className="flex-1 font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel py-2 bg-stardew-panel shadow-pixel"
               >
                 取消
               </button>
               <button
                 onClick={() => deleteDiary(deleteConfirm.id)}
-                className="flex-1 btn-stardew py-2 font-cute-cn text-sm bg-red-500 border-stardew-dark hover:bg-red-600"
+                className="flex-1 font-cute-cn text-sm text-red-600 border-2 border-stardew-dark rounded-pixel py-2 shadow-pixel bg-red-50 hover:bg-red-100"
+              >
+                确定删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteNotebookConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="card-pixel rounded-pixel-lg p-6 w-full max-w-sm">
+            <p className="font-cute-cn text-stardew-dark text-sm mb-4">确定删除日记本「{deleteNotebookConfirm.name}」？本子里的日记会保留，只是不再归类。</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteNotebookConfirm(null)}
+                className="flex-1 font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel py-2 bg-stardew-panel shadow-pixel"
+              >
+                取消
+              </button>
+              <button
+                onClick={() => deleteNotebook(deleteNotebookConfirm)}
+                className="flex-1 font-cute-cn text-sm text-red-600 border-2 border-stardew-dark rounded-pixel py-2 shadow-pixel bg-red-50 hover:bg-red-100"
               >
                 确定删除
               </button>
@@ -691,7 +803,7 @@ export default function DiaryPage() {
             </h2>
             <button
               onClick={submit}
-              disabled={formSubmitting || !formContent.trim()}
+              disabled={formSubmitting || (!formContent.trim() && formImages.length === 0)}
               className="font-cute-cn text-sm btn-stardew px-4 py-1.5 disabled:opacity-50"
             >
               {formSubmitting ? "保存中..." : "发送"}
@@ -707,10 +819,11 @@ export default function DiaryPage() {
               <textarea
                 value={formContent}
                 onChange={(e) => { setFormContent(e.target.value); setFormError(""); }}
-                placeholder="写下今天的感受..."
+                placeholder="写下今天的感受…可不写文字，只发图片也可"
                 className="w-full font-cute-cn text-stardew-dark text-base leading-loose min-h-[40vh] bg-transparent border-0 resize-none focus:outline-none placeholder:text-stardew-brown/50"
                 autoFocus
               />
+              <p className="font-cute-cn text-xs text-stardew-brown/70 mt-1">可不写文字，只发图片也可发送</p>
               <div className="mt-6 pt-4 border-t border-stardew-dark/15 space-y-4">
                 <div>
                   <label className="font-cute-cn text-sm font-bold text-stardew-dark block mb-2">📔 选择日记本</label>
@@ -792,16 +905,16 @@ export default function DiaryPage() {
                   )}
                 </div>
                 <div>
-                  <label className="font-cute-cn text-sm font-bold text-stardew-dark block mb-2">📷 添加照片</label>
+                  <label className="font-cute-cn text-sm font-bold text-stardew-dark block mb-2">📷 添加照片（最多 9 张）</label>
                   <input
                     type="file"
                     accept="image/*"
                     multiple
-                    onChange={(e) => setFormImages(Array.from(e.target.files ?? []))}
+                    onChange={(e) => setFormImages(Array.from(e.target.files ?? []).slice(0, 9))}
                     className="font-cute-cn text-sm file:mr-2 file:py-1.5 file:px-3 file:rounded-pixel file:border-2 file:border-stardew-dark file:bg-stardew-panel file:text-stardew-dark"
                   />
                   {formImages.length > 0 && (
-                    <p className="font-cute-cn text-xs text-stardew-brown mt-1">已选 {formImages.length} 张</p>
+                    <p className="font-cute-cn text-xs text-stardew-brown mt-1">已选 {formImages.length} 张，最多 9 张</p>
                   )}
                 </div>
                 <div>
