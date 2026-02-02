@@ -91,3 +91,18 @@ img.pixel-art {
     box-shadow: 6px 6px 0 var(--stardew-dark);
   }
 }
+
+/* 日记本风格：写日记全屏页 - 纸张 + 装订线 */
+.diary-page-bg {
+  background: linear-gradient(90deg, #8b7355 0%, #8b7355 28px, #f5e6d3 28px, #f5e6d3 100%);
+  min-height: 100dvh;
+}
+.diary-page-paper {
+  background: repeating-linear-gradient(
+    transparent,
+    transparent 31px,
+    rgba(61, 44, 41, 0.06) 31px,
+    rgba(61, 44, 41, 0.06) 32px
+  );
+  background-color: #fdfbf7;
+}

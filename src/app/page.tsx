@@ -43,7 +43,13 @@ export default function HomePage() {
         ))}
       </nav>
 
-      <footer className="mt-10 flex flex-col items-center gap-2 font-cute-cn text-xs text-stardew-brown">
+      <footer className="mt-10 flex flex-col items-center gap-3 font-cute-cn text-xs text-stardew-brown">
+        <Link
+          href="/profile"
+          className="text-stardew-green font-bold hover:underline"
+        >
+          编辑资料
+        </Link>
         <img src="/images/222.png" alt="" className="w-10 h-10 object-contain pixel-art opacity-90" />
         <span>数据将支持多端同步 · 敬请期待</span>
       </footer>

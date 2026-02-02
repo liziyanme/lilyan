@@ -22,8 +22,11 @@ export function HeaderProfile() {
     return () => subscription.unsubscribe();
   }, [pathname]);
 
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setLogoutConfirm(false);
     router.replace("/login");
   };
 
@@ -75,12 +78,35 @@ export function HeaderProfile() {
           </span>
         </Link>
         <button
-          onClick={handleLogout}
+          onClick={() => setLogoutConfirm(true)}
           className="font-cute-cn text-stardew-brown text-sm border-2 border-stardew-dark rounded-pixel px-2 py-1 hover:bg-stardew-cream/70"
         >
           退出
         </button>
       </div>
+      {logoutConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" onClick={() => setLogoutConfirm(false)}>
+          <div className="card-pixel rounded-pixel-lg p-5 w-full max-w-xs bg-stardew-cream" onClick={(e) => e.stopPropagation()}>
+            <p className="font-cute-cn font-bold text-stardew-dark mb-4 text-center">确定退出登录？</p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setLogoutConfirm(false)}
+                className="flex-1 font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel py-2 bg-stardew-panel text-stardew-dark"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex-1 font-cute-cn text-sm btn-stardew py-2"
+              >
+                退出
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

@@ -12,4 +12,14 @@ export type DiaryEntry = {
   created_at: string;
   updated_at: string;
   album_id?: string | null;
+  notebook_id?: string | null;
+  is_draft?: boolean;
+};
+
+/** 日记本：写日记时可选不同本子 */
+export type Notebook = {
+  id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
 };

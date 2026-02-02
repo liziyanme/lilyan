@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { getProfile } from "@/lib/profile";
 import { reverseGeocodeToCityDistrict } from "@/lib/geocode";
-import type { DiaryEntry } from "@/lib/diary-types";
+import type { DiaryEntry, Notebook } from "@/lib/diary-types";
 
 type Album = { id: string; name: string; sort_order: number };
 
 export default function DiaryPage() {
+  const router = useRouter();
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,11 +28,22 @@ export default function DiaryPage() {
   const [formContent, setFormContent] = useState("");
   const [formLocation, setFormLocation] = useState("");
   const [formAlbumId, setFormAlbumId] = useState<string>("");
+  const [formNotebookId, setFormNotebookId] = useState<string>("");
   const [formImages, setFormImages] = useState<File[]>([]);
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
   const [locationLoading, setLocationLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<DiaryEntry | null>(null);
+
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [newNotebookName, setNewNotebookName] = useState("");
+  const [showAddNotebook, setShowAddNotebook] = useState(false);
+  const [addingNotebook, setAddingNotebook] = useState(false);
+
+  const [tab, setTab] = useState<"diary" | "draft">("diary");
+  const [closeConfirm, setCloseConfirm] = useState<"draft" | null>(null);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
 
   const fetchDiaries = async () => {
     setLoading(true);
@@ -51,6 +64,12 @@ export default function DiaryPage() {
     fetchDiaries();
   }, []);
 
+  useEffect(() => {
+    fetchNotebooks().then(async (list) => {
+      if (list.length === 0) await ensureDefaultNotebook();
+    });
+  }, []);
+
   const fetchAlbums = async (): Promise<Album[]> => {
     const { data } = await supabase
       .from("album")
@@ -62,13 +81,6 @@ export default function DiaryPage() {
     return list;
   };
 
-  useEffect(() => {
-    if (!showForm) return;
-    fetchAlbums().then(async (list) => {
-      if (list.length === 0) await ensureDefaultAlbum();
-    });
-  }, [showForm]);
-
   const ensureDefaultAlbum = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     const { data } = await supabase
@@ -79,7 +91,67 @@ export default function DiaryPage() {
     if (data) await fetchAlbums();
   };
 
-  const filtered = entries.filter((e) =>
+  const fetchNotebooks = async (): Promise<Notebook[]> => {
+    const { data, error } = await supabase
+      .from("notebook")
+      .select("id, name, sort_order, created_at")
+      .order("sort_order", { ascending: true });
+    if (error) {
+      console.warn("notebook 表可能未创建，请执行 supabase-notebook.sql", error);
+      setNotebooks([]);
+      return [];
+    }
+    const list = (data ?? []) as Notebook[];
+    setNotebooks(list);
+    if (list.length > 0 && !formNotebookId) setFormNotebookId(list[0].id);
+    return list;
+  };
+
+  const ensureDefaultNotebook = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from("notebook")
+      .insert({ name: "默认日记本", sort_order: 0, user_id: user?.id ?? null })
+      .select("id")
+      .single();
+    if (!error && data) {
+      await fetchNotebooks();
+      setFormNotebookId(data.id);
+    }
+  };
+
+  const addNotebook = async () => {
+    const name = newNotebookName.trim();
+    if (!name) return;
+    setAddingNotebook(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from("notebook")
+      .insert({ name, sort_order: notebooks.length, user_id: user?.id ?? null })
+      .select("id, name, sort_order, created_at")
+      .single();
+    setAddingNotebook(false);
+    setNewNotebookName("");
+    setShowAddNotebook(false);
+    if (!error && data) {
+      setNotebooks((n) => [...n, data as Notebook]);
+      setFormNotebookId(data.id);
+    }
+  };
+
+  useEffect(() => {
+    if (!showForm) return;
+    fetchNotebooks().then(async (list) => {
+      if (list.length === 0) await ensureDefaultNotebook();
+    });
+    fetchAlbums().then(async (list) => {
+      if (list.length === 0) await ensureDefaultAlbum();
+    });
+  }, [showForm]);
+
+  const published = entries.filter((e) => !e.is_draft);
+  const drafts = entries.filter((e) => e.is_draft);
+  const filtered = published.filter((e) =>
     !search.trim() || e.content.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -113,8 +185,11 @@ export default function DiaryPage() {
     setFormContent("");
     setFormLocation("");
     setFormAlbumId("");
+    setFormNotebookId("");
     setFormImages([]);
     setFormError("");
+    setShowAddNotebook(false);
+    setNewNotebookName("");
     setShowForm(true);
   };
 
@@ -170,13 +245,63 @@ export default function DiaryPage() {
     setFormContent(e.content);
     setFormLocation(e.location ?? "");
     setFormAlbumId(e.album_id ?? "");
+    setFormNotebookId(e.notebook_id ?? "");
     setFormImages([]);
     setShowForm(true);
   };
 
-  const closeForm = () => {
+  const closeForm = (force = false) => {
+    if (!force && formContent.trim() && !editing?.id && !formSubmitting) {
+      setCloseConfirm("draft");
+      return;
+    }
     setShowForm(false);
     setEditing(null);
+    setCloseConfirm(null);
+    setSaveSuccessMessage(null);
+  };
+
+  const saveAsDraft = async () => {
+    const content = formContent.trim();
+    setDraftSaving(true);
+    setFormError("");
+    const { data: { user } } = await supabase.auth.getUser();
+    const profile = getProfile();
+    const albumId = formAlbumId || (formImages.length > 0 && albums[0] ? albums[0].id : null) || null;
+    const row = {
+      user_id: user?.id ?? null,
+      content: content || "（无内容）",
+      location: formLocation.trim() || null,
+      is_private: false,
+      is_draft: true,
+      album_id: albumId,
+      notebook_id: formNotebookId || null,
+      author_nickname: profile.nickname || "LZY",
+      author_avatar: profile.avatar,
+    };
+    try {
+      const { error } = await supabase.from("diary").insert(row).select("id").single();
+      if (error) throw error;
+      await fetchDiaries();
+      setSaveSuccessMessage("已保存为草稿");
+      setTimeout(() => {
+        setShowForm(false);
+        setEditing(null);
+        setCloseConfirm(null);
+        setSaveSuccessMessage(null);
+        setTab("draft");
+      }, 1200);
+    } catch (err) {
+      console.error(err);
+      setFormError(err instanceof Error ? err.message : "草稿保存失败");
+    }
+    setDraftSaving(false);
+  };
+
+  const publishDraft = async (e: DiaryEntry) => {
+    const { error } = await supabase.from("diary").update({ is_draft: false }).eq("id", e.id);
+    if (error) console.error(error);
+    else await fetchDiaries();
   };
 
   const uploadImages = async (diaryId: string, albumId: string | null): Promise<string[]> => {
@@ -216,7 +341,9 @@ export default function DiaryPage() {
       content,
       location: formLocation.trim() || null,
       is_private: false,
+      is_draft: false,
       album_id: albumId,
+      notebook_id: formNotebookId || null,
       author_nickname: profile.nickname || "LZY",
       author_avatar: profile.avatar,
     };
@@ -234,11 +361,16 @@ export default function DiaryPage() {
           await uploadImages(inserted.id, albumId);
         }
       }
-      fetchDiaries();
-      closeForm();
+      await fetchDiaries();
+      setSaveSuccessMessage("保存成功");
+      setTimeout(() => {
+        setShowForm(false);
+        setEditing(null);
+        setSaveSuccessMessage(null);
+      }, 1200);
     } catch (err) {
       console.error(err);
-      setFormError(err instanceof Error ? err.message : "保存失败，请检查 Supabase Storage 是否已创建 diary-images 桶（见 supabase-storage-setup.md）");
+      setFormError(err instanceof Error ? err.message : "保存失败。若提示缺少 is_draft 或 notebook_id 列，请在 Supabase 执行 supabase-draft.sql 和 supabase-notebook.sql");
     }
     setFormSubmitting(false);
   };
@@ -256,9 +388,9 @@ export default function DiaryPage() {
       <header className="flex items-center justify-between mb-4">
         <Link
           href="/"
-          className="font-cute-cn text-stardew-green font-bold border-2 border-stardew-dark rounded-pixel px-3 py-1.5 shadow-pixel active:shadow-[2px_2px_0_#3D2C29] active:translate-x-0.5 active:translate-y-0.5 transition-all"
+          className="font-cute-cn text-stardew-green font-bold border-2 border-stardew-dark rounded-pixel px-3 py-2 shadow-pixel active:shadow-[2px_2px_0_#3D2C29] active:translate-x-0.5 active:translate-y-0.5 transition-all text-sm sm:text-base"
         >
-          ← 返回
+          ← 返回首页
         </Link>
         <h1 className="font-cute-cn font-bold text-xl text-stardew-dark">📔 日记本</h1>
         <button
@@ -269,19 +401,124 @@ export default function DiaryPage() {
         </button>
       </header>
 
-      {/* 搜索 */}
-      <div className="card-pixel rounded-pixel-lg p-3 mb-4 max-w-md mx-auto">
-        <input
-          type="text"
-          placeholder="搜索日记内容..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full font-cute-cn text-stardew-dark border-2 border-stardew-dark rounded-pixel px-3 py-2 bg-stardew-panel placeholder:text-stardew-brown/60 focus:outline-none focus:ring-2 focus:ring-stardew-green"
-        />
+      {/* 日记 / 草稿箱 切换 */}
+      <div className="flex gap-2 mb-4 max-w-md mx-auto">
+        <button
+          type="button"
+          onClick={() => setTab("diary")}
+          className={`flex-1 font-cute-cn font-bold py-2.5 rounded-pixel border-2 border-stardew-dark transition-all ${tab === "diary" ? "bg-stardew-green text-white shadow-pixel" : "bg-stardew-panel text-stardew-dark"}`}
+        >
+          📔 日记
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("draft")}
+          className={`flex-1 font-cute-cn font-bold py-2.5 rounded-pixel border-2 border-stardew-dark transition-all ${tab === "draft" ? "bg-stardew-green text-white shadow-pixel" : "bg-stardew-panel text-stardew-dark"}`}
+        >
+          📥 草稿箱 {drafts.length > 0 && `(${drafts.length})`}
+        </button>
       </div>
 
-      {/* 列表 */}
-      {loading ? (
+      {/* 我的日记本（仅日记 tab，展示可选本子） */}
+      {tab === "diary" && (
+        <div className="card-pixel rounded-pixel-lg p-4 mb-4 max-w-md mx-auto">
+          <p className="font-cute-cn font-bold text-stardew-dark mb-2">📔 我的日记本</p>
+          {notebooks.length === 0 ? (
+            <p className="font-cute-cn text-stardew-brown text-sm mb-2">暂无日记本。写日记时点「＋ 新建日记本」可添加；若一直为空，请在 Supabase 执行 supabase-notebook.sql</p>
+          ) : (
+            <ul className="flex flex-wrap gap-2 mb-2">
+              {notebooks.map((n) => (
+                <li key={n.id} className="font-cute-cn text-sm px-3 py-1.5 rounded-pixel bg-stardew-panel border border-stardew-dark/30 text-stardew-dark">
+                  {n.name}
+                </li>
+              ))}
+            </ul>
+          )}
+          {showAddNotebook ? (
+            <div className="flex gap-2 items-center flex-wrap">
+              <input
+                type="text"
+                value={newNotebookName}
+                onChange={(e) => setNewNotebookName(e.target.value)}
+                placeholder="新日记本名称"
+                maxLength={20}
+                className="font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel px-3 py-1.5 flex-1 min-w-[120px] bg-stardew-panel"
+                onKeyDown={(e) => e.key === "Enter" && addNotebook()}
+              />
+              <button onClick={addNotebook} disabled={addingNotebook || !newNotebookName.trim()} className="font-cute-cn text-sm btn-stardew px-3 py-1.5 disabled:opacity-50">
+                {addingNotebook ? "添加中" : "添加"}
+              </button>
+              <button type="button" onClick={() => { setShowAddNotebook(false); setNewNotebookName(""); }} className="font-cute-cn text-xs text-stardew-brown">取消</button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setShowAddNotebook(true)} className="font-cute-cn text-sm text-stardew-green border-2 border-stardew-dark rounded-pixel px-3 py-1.5">
+              ＋ 新建日记本
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 搜索（仅日记 tab） */}
+      {tab === "diary" && (
+        <div className="card-pixel rounded-pixel-lg p-3 mb-4 max-w-md mx-auto">
+          <input
+            type="text"
+            placeholder="搜索日记内容..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full font-cute-cn text-stardew-dark border-2 border-stardew-dark rounded-pixel px-3 py-2 bg-stardew-panel placeholder:text-stardew-brown/60 focus:outline-none focus:ring-2 focus:ring-stardew-green"
+          />
+        </div>
+      )}
+
+      {/* 草稿箱列表 */}
+      {tab === "draft" && (
+        <div className="max-w-md mx-auto space-y-3 mb-6">
+          {drafts.length === 0 ? (
+            <p className="text-center font-cute-cn text-stardew-brown py-12 card-pixel rounded-pixel-lg p-6">
+              暂无草稿，写日记时点「关闭」可保存为草稿
+            </p>
+          ) : (
+            drafts.map((e) => (
+              <article
+                key={e.id}
+                className="card-pixel rounded-pixel-lg p-4 border-l-4 border-stardew-brown/50"
+              >
+                <p className="font-cute-cn text-stardew-dark text-sm line-clamp-2 mb-2">{e.content}</p>
+                <p className="font-cute-cn text-stardew-brown/70 text-xs mb-3">
+                  {new Date(e.updated_at).toLocaleString("zh-CN")}
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(e)}
+                    className="font-cute-cn text-sm btn-stardew px-3 py-1.5"
+                  >
+                    继续写
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => publishDraft(e)}
+                    className="font-cute-cn text-sm text-stardew-green border-2 border-stardew-dark rounded-pixel px-3 py-1.5"
+                  >
+                    发布
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirm(e)}
+                    className="font-cute-cn text-sm text-red-600 border border-red-400 rounded-pixel px-3 py-1.5 hover:bg-red-50"
+                  >
+                    删除
+                  </button>
+                </div>
+              </article>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* 日记列表 */}
+      {tab === "diary" && (loading ? (
         <p className="text-center font-cute-cn text-stardew-brown py-12">加载中...</p>
       ) : filtered.length === 0 ? (
         <p className="text-center font-cute-cn text-stardew-brown py-12 card-pixel rounded-pixel-lg max-w-sm mx-auto p-6">
@@ -322,7 +559,7 @@ export default function DiaryPage() {
             </li>
           ))}
         </ul>
-      )}
+      ))}
 
       {/* 日记详情 - 全屏展示（仿微博） */}
       {viewing && (
@@ -332,7 +569,12 @@ export default function DiaryPage() {
               ← 返回
             </button>
             <h2 className="font-cute-cn font-bold text-stardew-dark flex-1 text-center">日记</h2>
-            <span className="w-12" />
+            <button
+              onClick={async () => { await supabase.auth.signOut(); router.replace("/login"); }}
+              className="font-cute-cn text-stardew-brown text-sm border-2 border-stardew-dark rounded-pixel px-3 py-1.5"
+            >
+              退出
+            </button>
           </header>
           <div className="flex-1 overflow-y-auto overscroll-contain">
             <div className="max-w-lg mx-auto px-4 py-6 pb-32">
@@ -429,99 +671,188 @@ export default function DiaryPage() {
         </div>
       )}
 
-      {/* 写/编辑表单 */}
+      {/* 写/编辑表单 - 全屏日记本风格 */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-4">
-          <div className="card-pixel rounded-pixel-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-            <h2 className="font-cute-cn font-bold text-lg text-stardew-dark mb-4">
-              {editing ? "编辑日记" : "写日记"}
+        <div className="fixed inset-0 z-50 flex flex-col diary-page-bg safe-top safe-bottom">
+          <header className="flex items-center justify-between px-4 py-3 border-b border-stardew-dark/20 bg-stardew-cream/95 shrink-0">
+            <div className="flex items-center gap-2">
+              <button onClick={() => closeForm()} className="font-cute-cn text-stardew-dark font-bold text-sm">
+                ← 关闭
+              </button>
+              <button
+                onClick={async () => { await supabase.auth.signOut(); router.replace("/login"); }}
+                className="font-cute-cn text-stardew-brown text-xs border border-stardew-dark rounded-pixel px-2 py-1"
+              >
+                退出
+              </button>
+            </div>
+            <h2 className="font-cute-cn font-bold text-stardew-dark">
+              {saveSuccessMessage || (editing ? "编辑日记" : "写日记")}
             </h2>
-            {formError && (
-              <div className="mb-3 card-pixel rounded-pixel px-3 py-2 bg-red-100 border-2 border-red-400">
-                <p className="font-cute-cn text-sm text-red-700">{formError}</p>
-              </div>
-            )}
-            <textarea
-              value={formContent}
-              onChange={(e) => { setFormContent(e.target.value); setFormError(""); }}
-              placeholder="写下今天的感受..."
-              rows={4}
-              className="w-full font-cute-cn text-stardew-dark border-2 border-stardew-dark rounded-pixel px-3 py-2 bg-stardew-panel placeholder:text-stardew-brown/60 focus:outline-none focus:ring-2 focus:ring-stardew-green resize-none"
-            />
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              <button
-                onClick={getLocation}
-                disabled={locationLoading}
-                className="font-cute-cn text-sm text-stardew-green border-2 border-stardew-dark rounded-pixel px-3 py-1.5 disabled:opacity-50"
-              >
-                {locationLoading ? "获取中..." : "📍 添加定位"}
-              </button>
-              {formLocation && /^-?\d+\.?\d*,\s*-?\d+\.?\d*$/.test(formLocation.trim()) && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const [lat, lon] = formLocation.split(",").map((s) => parseFloat(s.trim()));
-                    if (!isNaN(lat) && !isNaN(lon)) {
-                      setLocationLoading(true);
-                      const addr = await reverseGeocodeToCityDistrict(lat, lon);
-                      setFormLocation(addr);
-                      setLocationLoading(false);
-                    }
-                  }}
-                  disabled={locationLoading}
-                  className="font-cute-cn text-xs text-stardew-green border border-stardew-dark rounded-pixel px-2 py-1 disabled:opacity-50"
-                >
-                  转地址
-                </button>
+            <button
+              onClick={submit}
+              disabled={formSubmitting || !formContent.trim()}
+              className="font-cute-cn text-sm btn-stardew px-4 py-1.5 disabled:opacity-50"
+            >
+              {formSubmitting ? "保存中..." : "发送"}
+            </button>
+          </header>
+          <div className="flex-1 overflow-y-auto diary-page-paper">
+            <div className="max-w-xl mx-auto pl-10 pr-6 py-6">
+              {formError && (
+                <div className="mb-4 rounded-pixel px-3 py-2 bg-red-100/90 border border-red-400">
+                  <p className="font-cute-cn text-sm text-red-700">{formError}</p>
+                </div>
               )}
-              {formLocation && (
-                <span className="font-cute-cn text-xs text-stardew-brown truncate max-w-[180px]">{formLocation}</span>
-              )}
-            </div>
-            <div className="mt-3">
-              <label className="font-cute-cn text-sm text-stardew-dark block mb-2">📷 添加照片</label>
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={(e) => setFormImages(Array.from(e.target.files ?? []))}
-                className="font-cute-cn text-sm file:mr-2 file:py-1.5 file:px-3 file:rounded-pixel file:border-2 file:border-stardew-dark file:bg-stardew-panel file:text-stardew-dark"
+              <textarea
+                value={formContent}
+                onChange={(e) => { setFormContent(e.target.value); setFormError(""); }}
+                placeholder="写下今天的感受..."
+                className="w-full font-cute-cn text-stardew-dark text-base leading-loose min-h-[40vh] bg-transparent border-0 resize-none focus:outline-none placeholder:text-stardew-brown/50"
+                autoFocus
               />
-              {formImages.length > 0 && (
-                <p className="font-cute-cn text-xs text-stardew-brown mt-1">已选 {formImages.length} 张</p>
-              )}
-            </div>
-            <div className="mt-3">
-              <label className="font-cute-cn text-sm text-stardew-dark block mb-2">📁 发到相册</label>
-              <select
-                value={formAlbumId}
-                onChange={(e) => setFormAlbumId(e.target.value)}
-                className="font-cute-cn text-sm w-full border-2 border-stardew-dark rounded-pixel px-3 py-2 bg-stardew-panel text-stardew-dark"
-              >
-                <option value="">不放入相册</option>
-                {albums.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={closeForm}
-                className="flex-1 font-cute-cn text-stardew-brown border-2 border-stardew-dark rounded-pixel py-2"
-              >
-                取消
-              </button>
-              <button
-                onClick={submit}
-                disabled={formSubmitting || !formContent.trim()}
-                className="flex-1 btn-stardew py-2 disabled:opacity-50"
-              >
-                {formSubmitting ? "保存中..." : "保存"}
-              </button>
+              <div className="mt-6 pt-4 border-t border-stardew-dark/15 space-y-4">
+                <div>
+                  <label className="font-cute-cn text-sm font-bold text-stardew-dark block mb-2">📔 选择日记本</label>
+                  {notebooks.length > 0 && (
+                    <p className="font-cute-cn text-xs text-stardew-brown mb-2">当前可选：{notebooks.map((n) => n.name).join("、")}</p>
+                  )}
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {notebooks.length > 0 && (
+                      <select
+                        value={formNotebookId}
+                        onChange={(e) => { setFormNotebookId(e.target.value); setShowAddNotebook(false); }}
+                        className="font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel px-3 py-2 bg-white/80 text-stardew-dark max-w-[180px]"
+                      >
+                        {notebooks.map((n) => (
+                          <option key={n.id} value={n.id}>{n.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    {!showAddNotebook ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowAddNotebook(true)}
+                          className="font-cute-cn text-sm text-stardew-green border-2 border-stardew-dark rounded-pixel px-3 py-1.5"
+                        >
+                          ＋ 新建日记本
+                        </button>
+                      ) : (
+                        <div className="flex gap-2 items-center flex-wrap">
+                          <input
+                            type="text"
+                            value={newNotebookName}
+                            onChange={(e) => setNewNotebookName(e.target.value)}
+                            placeholder="日记本名称"
+                            maxLength={20}
+                            className="font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel px-3 py-1.5 w-32 bg-white/80"
+                            onKeyDown={(e) => e.key === "Enter" && addNotebook()}
+                          />
+                          <button onClick={addNotebook} disabled={addingNotebook || !newNotebookName.trim()} className="font-cute-cn text-sm btn-stardew px-3 py-1.5 disabled:opacity-50">
+                            {addingNotebook ? "添加中" : "添加"}
+                          </button>
+                          <button type="button" onClick={() => { setShowAddNotebook(false); setNewNotebookName(""); }} className="font-cute-cn text-xs text-stardew-brown">
+                            取消
+                          </button>
+                        </div>
+                      )}
+                  </div>
+                  {notebooks.length === 0 && !showAddNotebook && (
+                    <p className="font-cute-cn text-xs text-stardew-brown mt-1">未创建日记本时日记不归类；可先点「新建日记本」。若未执行 supabase-notebook.sql 请先在 Supabase 执行。</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={getLocation}
+                    disabled={locationLoading}
+                    className="font-cute-cn text-sm text-stardew-green border-2 border-stardew-dark rounded-pixel px-3 py-1.5 disabled:opacity-50"
+                  >
+                    {locationLoading ? "获取中..." : "📍 添加定位"}
+                  </button>
+                  {formLocation && /^-?\d+\.?\d*,\s*-?\d+\.?\d*$/.test(formLocation.trim()) && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const [lat, lon] = formLocation.split(",").map((s) => parseFloat(s.trim()));
+                        if (!isNaN(lat) && !isNaN(lon)) {
+                          setLocationLoading(true);
+                          const addr = await reverseGeocodeToCityDistrict(lat, lon);
+                          setFormLocation(addr);
+                          setLocationLoading(false);
+                        }
+                      }}
+                      disabled={locationLoading}
+                      className="font-cute-cn text-xs text-stardew-green border border-stardew-dark rounded-pixel px-2 py-1 disabled:opacity-50"
+                    >
+                      转地址
+                    </button>
+                  )}
+                  {formLocation && (
+                    <span className="font-cute-cn text-xs text-stardew-brown truncate max-w-[200px]">{formLocation}</span>
+                  )}
+                </div>
+                <div>
+                  <label className="font-cute-cn text-sm font-bold text-stardew-dark block mb-2">📷 添加照片</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => setFormImages(Array.from(e.target.files ?? []))}
+                    className="font-cute-cn text-sm file:mr-2 file:py-1.5 file:px-3 file:rounded-pixel file:border-2 file:border-stardew-dark file:bg-stardew-panel file:text-stardew-dark"
+                  />
+                  {formImages.length > 0 && (
+                    <p className="font-cute-cn text-xs text-stardew-brown mt-1">已选 {formImages.length} 张</p>
+                  )}
+                </div>
+                <div>
+                  <label className="font-cute-cn text-sm font-bold text-stardew-dark block mb-2">📁 发到相册</label>
+                  <select
+                    value={formAlbumId}
+                    onChange={(e) => setFormAlbumId(e.target.value)}
+                    className="font-cute-cn text-sm w-full max-w-xs border-2 border-stardew-dark rounded-pixel px-3 py-2 bg-white/80 text-stardew-dark"
+                  >
+                    <option value="">不放入相册</option>
+                    {albums.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
           </div>
+
+          {/* 关闭时：有内容则询问是否保存草稿 */}
+          {closeConfirm === "draft" && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+              <div className="card-pixel rounded-pixel-lg p-6 w-full max-w-sm bg-stardew-cream">
+                <p className="font-cute-cn font-bold text-stardew-dark mb-4">有未发送的内容，保存为草稿？</p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={saveAsDraft}
+                    disabled={draftSaving}
+                    className="font-cute-cn text-sm btn-stardew w-full py-2.5 disabled:opacity-50"
+                  >
+                    {draftSaving ? "保存中..." : "保存为草稿"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeForm(true)}
+                    className="font-cute-cn text-sm border-2 border-stardew-dark rounded-pixel py-2.5 w-full bg-stardew-panel text-stardew-dark"
+                  >
+                    不保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCloseConfirm(null)}
+                    className="font-cute-cn text-sm text-stardew-brown py-2"
+                  >
+                    继续编辑
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </main>
