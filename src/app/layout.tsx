@@ -3,6 +3,7 @@ import { Press_Start_2P, DotGothic16 } from "next/font/google";
 import { AuthGuard } from "@/components/AuthGuard";
 import { HeaderProfile } from "@/components/HeaderProfile";
 import { PixelSceneBackground } from "@/components/PixelSceneBackground";
+import { VisitorTracker } from "@/components/VisitorTracker";
 import "./globals.css";
 
 const pressStart = Press_Start_2P({
@@ -46,6 +47,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className={`${pressStart.variable} ${dotGothic.variable}`}>
       <body className="min-h-screen bg-tint-blue-strong text-stardew-dark antialiased font-cute-cn flex flex-col relative">
+        <VisitorTracker />
         <PixelSceneBackground />
         <header className="relative z-20"><HeaderProfile /></header>
         <div className="flex-1 min-h-0 relative z-10">
